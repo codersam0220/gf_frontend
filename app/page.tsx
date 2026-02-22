@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPersona, createSession, sendMessage } from "@/lib/api";
 
 const FREE_SECONDS = 30;
+const TIMER_ENABLED = false; // disable during testing; re-enable for production
 
 type Screen = "select" | "chat";
 type PersonaGender = "female" | "male";
@@ -50,7 +51,7 @@ export default function Home() {
   }, [messages, loading]);
 
   useEffect(() => {
-    if (!started || timeUp) return;
+    if (!TIMER_ENABLED || !started || timeUp) return;
     timerRef.current = setInterval(() => {
       setSecondsLeft((s) => {
         if (s <= 1) {
