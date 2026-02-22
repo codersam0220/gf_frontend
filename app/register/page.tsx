@@ -30,6 +30,12 @@ export default function RegisterPage() {
   return (
     <main className="min-h-screen bg-gray-950 flex flex-col items-center justify-center p-6">
       <div className="w-full max-w-xs">
+        <button
+          onClick={() => router.back()}
+          className="text-gray-500 hover:text-white transition text-sm mb-6"
+        >
+          ← Back
+        </button>
         <div className="text-center mb-8">
           <h1 className="text-white text-xl font-semibold tracking-tight">Create account</h1>
           <p className="text-gray-500 text-sm mt-1">Get 100 credits free</p>
