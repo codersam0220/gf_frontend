@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { createPersona, createSession, sendMessage } from "@/lib/api";
+import { useRouter } from "next/navigation";
+import { createPersona, createSession, sendMessage, getMe } from "@/lib/api";
 
 const FREE_SECONDS = 30;
 const TIMER_ENABLED = true;
@@ -9,6 +10,7 @@ const TIMER_ENABLED = true;
 type Screen = "age_check" | "select" | "chat";
 type PersonaGender = "female" | "male";
 type Message = { role: "user" | "assistant"; content: string };
+type AuthUser = { email: string; credits: number; is_admin: boolean };
 
 const THEME = {
   female: {
@@ -41,6 +43,7 @@ function setAgeVerified() {
 }
 
 export default function Home() {
+  const router = useRouter();
   const [screen, setScreen] = useState<Screen>("age_check");
   const [personaGender, setPersonaGender] = useState<PersonaGender>("female");
   const [messages, setMessages] = useState<Message[]>([]);
@@ -51,10 +54,25 @@ export default function Home() {
   const [timeUp, setTimeUp] = useState(false);
   const [started, setStarted] = useState(false);
   const [connecting, setConnecting] = useState(false);
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [authLoaded, setAuthLoaded] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Skip age check if already verified this session
+  // Load auth state on mount
+  useEffect(() => {
+    const token = localStorage.getItem("auth_token");
+    if (token) {
+      getMe().then((data) => {
+        if (data) setUser(data);
+        setAuthLoaded(true);
+      });
+    } else {
+      setAuthLoaded(true);
+    }
+  }, []);
+
+  // Skip age check if already verified
   useEffect(() => {
     if (getAgeVerified()) setScreen("select");
   }, []);
@@ -63,8 +81,11 @@ export default function Home() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
+  // Timer logic: only for non-admin users (or anon)
+  const timerActive = TIMER_ENABLED && started && !timeUp && (!user || !user.is_admin);
+
   useEffect(() => {
-    if (!TIMER_ENABLED || !started || timeUp) return;
+    if (!timerActive) return;
     timerRef.current = setInterval(() => {
       setSecondsLeft((s) => {
         if (s <= 1) {
@@ -76,17 +97,31 @@ export default function Home() {
       });
     }, 1000);
     return () => clearInterval(timerRef.current!);
-  }, [started, timeUp]);
+  }, [timerActive]);
 
   const handleAgeConfirm = () => {
     setAgeVerified();
     setScreen("select");
   };
 
+  const handleLogout = () => {
+    localStorage.removeItem("auth_token");
+    setUser(null);
+    setSecondsLeft(FREE_SECONDS);
+  };
+
   const handleSelect = async (gender: PersonaGender) => {
     setPersonaGender(gender);
     setScreen("chat");
     setConnecting(true);
+
+    // Set initial timer value based on auth state
+    if (user && !user.is_admin) {
+      setSecondsLeft(user.credits);
+    } else if (!user) {
+      setSecondsLeft(FREE_SECONDS);
+    }
+
     try {
       const anonId = getAnonId();
       const userGender = gender === "female" ? "male" : "female";
@@ -110,8 +145,22 @@ export default function Home() {
     try {
       const data = await sendMessage(sessionId, text);
       setMessages((prev) => [...prev, { role: "assistant", content: data.reply }]);
-    } catch {
-      setMessages((prev) => [...prev, { role: "assistant", content: "Something went wrong 😢" }]);
+
+      // Sync credits_remaining from server for logged-in users
+      if (data.credits_remaining !== null && data.credits_remaining !== undefined) {
+        setSecondsLeft(data.credits_remaining);
+        setUser((prev) => prev ? { ...prev, credits: data.credits_remaining } : prev);
+        if (data.credits_remaining <= 0) {
+          setTimeUp(true);
+        }
+      }
+    } catch (err: unknown) {
+      const code = (err as { code?: number }).code;
+      if (code === 402) {
+        setTimeUp(true);
+      } else {
+        setMessages((prev) => [...prev, { role: "assistant", content: "Something went wrong 😢" }]);
+      }
     } finally {
       setLoading(false);
     }
@@ -120,6 +169,7 @@ export default function Home() {
   const formatTime = (s: number) => `0:${s.toString().padStart(2, "0")}`;
 
   const t = THEME[personaGender];
+  const showTimer = TIMER_ENABLED && started && !connecting && (!user || !user.is_admin);
 
   // ── Age verification ──────────────────────────────────────────────────────────
   if (screen === "age_check") {
@@ -156,6 +206,30 @@ export default function Home() {
     return (
       <main className="min-h-screen bg-gray-950 flex flex-col items-center justify-center p-6">
         <div className="w-full max-w-xs">
+          {/* Auth header */}
+          <div className="flex justify-end mb-4 min-h-[28px]">
+            {authLoaded && (
+              user ? (
+                <div className="flex items-center gap-3">
+                  <span className="text-gray-400 text-xs">{user.credits} credits</span>
+                  <button
+                    onClick={handleLogout}
+                    className="text-gray-500 hover:text-gray-300 text-xs transition"
+                  >
+                    Log out
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => router.push("/login")}
+                  className="text-gray-500 hover:text-gray-300 text-xs transition"
+                >
+                  Log in
+                </button>
+              )
+            )}
+          </div>
+
           <div className="text-center mb-10">
             <h1 className="text-white text-xl font-semibold tracking-tight">
               Talk to a stranger
@@ -181,7 +255,9 @@ export default function Home() {
           </div>
 
           <p className="text-center text-gray-600 text-xs mt-8">
-            30 seconds free · No signup needed
+            {user
+              ? `${user.credits} seconds of chat available`
+              : "30 seconds free · No signup needed"}
           </p>
         </div>
       </main>
@@ -202,7 +278,7 @@ export default function Home() {
                 setMessages([]);
                 setStarted(false);
                 setTimeUp(false);
-                setSecondsLeft(FREE_SECONDS);
+                setSecondsLeft(user && !user.is_admin ? user.credits : FREE_SECONDS);
                 setSessionId(null);
                 setConnecting(false);
               }}
@@ -219,11 +295,17 @@ export default function Home() {
               </div>
             </div>
           </div>
-          {TIMER_ENABLED && started && !connecting && (
-            <div className={`text-sm font-mono font-bold ${secondsLeft <= 10 ? "text-red-400" : "text-gray-400"}`}>
-              {timeUp ? "Time's up" : formatTime(secondsLeft)}
-            </div>
-          )}
+
+          <div className="flex items-center gap-3">
+            {user && (
+              <span className="text-gray-500 text-xs">{user.credits} cr</span>
+            )}
+            {showTimer && (
+              <div className={`text-sm font-mono font-bold ${secondsLeft <= 10 ? "text-red-400" : "text-gray-400"}`}>
+                {timeUp ? "Time's up" : formatTime(secondsLeft)}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Messages */}
@@ -269,15 +351,46 @@ export default function Home() {
           <div className="absolute inset-0 bg-black/70 flex items-center justify-center backdrop-blur-sm">
             <div className="bg-gray-900 rounded-2xl p-6 mx-6 text-center shadow-2xl border border-gray-700">
               <h2 className="text-white font-bold text-lg mb-1">Keep chatting</h2>
-              <p className="text-gray-400 text-sm mb-5">
-                Your free 30 seconds are up. Sign up to continue.
-              </p>
-              <button className={`w-full ${t.sendBtn} text-white font-semibold py-3 rounded-xl transition mb-2`}>
-                Sign up — Get 100 credits free
-              </button>
-              <button className="w-full bg-gray-700 hover:bg-gray-600 text-gray-300 font-medium py-2 rounded-xl transition text-sm">
-                Log in
-              </button>
+              {user ? (
+                <>
+                  <p className="text-gray-400 text-sm mb-5">
+                    You&apos;ve used all your credits. Buy more to continue.
+                  </p>
+                  <button className={`w-full ${t.sendBtn} text-white font-semibold py-3 rounded-xl transition mb-2`}>
+                    Buy credits
+                  </button>
+                  <button
+                    onClick={() => {
+                      setScreen("select");
+                      setMessages([]);
+                      setStarted(false);
+                      setTimeUp(false);
+                      setSessionId(null);
+                    }}
+                    className="w-full bg-gray-700 hover:bg-gray-600 text-gray-300 font-medium py-2 rounded-xl transition text-sm"
+                  >
+                    Back to home
+                  </button>
+                </>
+              ) : (
+                <>
+                  <p className="text-gray-400 text-sm mb-5">
+                    Your free 30 seconds are up. Sign up to continue.
+                  </p>
+                  <button
+                    onClick={() => router.push("/register")}
+                    className={`w-full ${t.sendBtn} text-white font-semibold py-3 rounded-xl transition mb-2`}
+                  >
+                    Sign up — Get 100 credits free
+                  </button>
+                  <button
+                    onClick={() => router.push("/login")}
+                    className="w-full bg-gray-700 hover:bg-gray-600 text-gray-300 font-medium py-2 rounded-xl transition text-sm"
+                  >
+                    Log in
+                  </button>
+                </>
+              )}
             </div>
           </div>
         )}
@@ -287,7 +400,7 @@ export default function Home() {
           <input
             className="flex-1 bg-gray-700 text-white rounded-xl px-4 py-2 text-sm outline-none placeholder-gray-500 disabled:opacity-50"
             placeholder={
-              timeUp ? "Sign up to keep chatting…" :
+              timeUp ? (user ? "Buy credits to keep chatting…" : "Sign up to keep chatting…") :
               connecting ? "Connecting…" :
               "Type a message…"
             }
