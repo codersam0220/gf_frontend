@@ -4,9 +4,9 @@ import { useEffect, useRef, useState } from "react";
 import { createPersona, createSession, sendMessage } from "@/lib/api";
 
 const FREE_SECONDS = 30;
-const TIMER_ENABLED = false; // disable during testing; re-enable for production
+const TIMER_ENABLED = true;
 
-type Screen = "select" | "chat";
+type Screen = "age_check" | "select" | "chat";
 type PersonaGender = "female" | "male";
 type Message = { role: "user" | "assistant"; content: string };
 
@@ -32,8 +32,16 @@ function getAnonId() {
   return id;
 }
 
+function getAgeVerified() {
+  return localStorage.getItem("age_verified") === "true";
+}
+
+function setAgeVerified() {
+  localStorage.setItem("age_verified", "true");
+}
+
 export default function Home() {
-  const [screen, setScreen] = useState<Screen>("select");
+  const [screen, setScreen] = useState<Screen>("age_check");
   const [personaGender, setPersonaGender] = useState<PersonaGender>("female");
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -45,6 +53,11 @@ export default function Home() {
   const [connecting, setConnecting] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Skip age check if already verified this session
+  useEffect(() => {
+    if (getAgeVerified()) setScreen("select");
+  }, []);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -65,8 +78,12 @@ export default function Home() {
     return () => clearInterval(timerRef.current!);
   }, [started, timeUp]);
 
+  const handleAgeConfirm = () => {
+    setAgeVerified();
+    setScreen("select");
+  };
+
   const handleSelect = async (gender: PersonaGender) => {
-    // Switch to chat immediately — don't wait for the API
     setPersonaGender(gender);
     setScreen("chat");
     setConnecting(true);
@@ -104,7 +121,37 @@ export default function Home() {
 
   const t = THEME[personaGender];
 
-  // ── Selection screen ─────────────────────────────────────────────────────────
+  // ── Age verification ──────────────────────────────────────────────────────────
+  if (screen === "age_check") {
+    return (
+      <main className="min-h-screen bg-gray-950 flex flex-col items-center justify-center p-6">
+        <div className="w-full max-w-xs text-center">
+          <p className="text-4xl mb-6">🔞</p>
+          <h1 className="text-white text-xl font-semibold mb-2">Adults only</h1>
+          <p className="text-gray-400 text-sm mb-8">
+            This site contains adult content. You must be 18 or older to continue.
+          </p>
+          <button
+            onClick={handleAgeConfirm}
+            className="w-full bg-white text-gray-950 font-semibold py-3 rounded-xl hover:bg-gray-100 transition mb-3"
+          >
+            I am 18 or older — Enter
+          </button>
+          <a
+            href="https://www.google.com"
+            className="block w-full bg-gray-800 text-gray-400 font-medium py-3 rounded-xl hover:bg-gray-700 transition text-sm"
+          >
+            I am under 18 — Leave
+          </a>
+          <p className="text-gray-600 text-xs mt-6">
+            By entering you confirm you are 18+ and agree to our terms.
+          </p>
+        </div>
+      </main>
+    );
+  }
+
+  // ── Selection screen ──────────────────────────────────────────────────────────
   if (screen === "select") {
     return (
       <main className="min-h-screen bg-gray-950 flex flex-col items-center justify-center p-6">
@@ -172,9 +219,9 @@ export default function Home() {
               </div>
             </div>
           </div>
-          {started && !connecting && (
+          {TIMER_ENABLED && started && !connecting && (
             <div className={`text-sm font-mono font-bold ${secondsLeft <= 10 ? "text-red-400" : "text-gray-400"}`}>
-              {timeUp ? "Time&apos;s up" : formatTime(secondsLeft)}
+              {timeUp ? "Time's up" : formatTime(secondsLeft)}
             </div>
           )}
         </div>
@@ -223,7 +270,7 @@ export default function Home() {
             <div className="bg-gray-900 rounded-2xl p-6 mx-6 text-center shadow-2xl border border-gray-700">
               <h2 className="text-white font-bold text-lg mb-1">Keep chatting</h2>
               <p className="text-gray-400 text-sm mb-5">
-                Your free trial is up. Sign up to continue.
+                Your free 30 seconds are up. Sign up to continue.
               </p>
               <button className={`w-full ${t.sendBtn} text-white font-semibold py-3 rounded-xl transition mb-2`}>
                 Sign up — Get 100 credits free
